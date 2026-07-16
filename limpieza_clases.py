@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 
-ruta_carpeta = r'C:\Users\Carla\Documents\analisis-horarios\datos_originales'
+ruta_carpeta = r'/workspaces/Analisis-de-horarios-de-clase-y-examenes-planificados/datos_originales'
 nombre_archivo = 'horario_aulas_limpieza.xlsx'
 ruta_completa = os.path.join(ruta_carpeta, nombre_archivo)
 
