@@ -297,8 +297,6 @@ df_filtrado['FLAG_UBICACION_INVALIDA'] = (
     condicion_ubicacion_invalida.astype(int)
 )
 
-# El aula no se utiliza sola porque puede repetirse
-# en diferentes bloques.
 df_filtrado['ID_ESPACIO'] = (
     df_filtrado['BLOQUE']
     .fillna('SIN_BLOQUE')
@@ -994,3 +992,16 @@ print('-------------------')
 print(resumen.to_string(index=False))
 print()
 print(f'Archivo generado en:\n{ruta_salida}')
+
+catalogo_bloques = (
+    df_filtrado[
+        ['BLOQUE', 'REFERENCIA']
+    ]
+    .drop_duplicates()
+    .sort_values('BLOQUE')
+)
+
+catalogo_bloques.to_excel(
+    'catalogos/catalogo_bloques.xlsx',
+    index=False
+)
