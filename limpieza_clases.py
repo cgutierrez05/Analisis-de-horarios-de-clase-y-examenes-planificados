@@ -25,11 +25,17 @@ ruta_salida = os.path.join(
     'resultado_limpieza_clases.xlsx'
 )
 
+ruta_catalogo_bloques = os.path.join(
+    ruta_proyecto,
+    'catalogos',
+    'catalogo_bloques.xlsx'
+)
+
 anio_objetivo = 2026
 termino_objetivo = '1S'
 campus_objetivo = 'CAMPUS GUSTAVO GALINDO'
 
-# Duración máxima razonable de una clase.
+# Una duración mayor a ocho horas se marcará como atípica.
 duracion_maxima_minutos = 480
 
 
@@ -45,10 +51,11 @@ if not os.path.exists(ruta_entrada):
 df = pd.read_excel(ruta_entrada)
 
 if df.empty:
-    raise ValueError('El archivo de clases está vacío.')
+    raise ValueError(
+        'El archivo de clases está vacío.'
+    )
 
-# Corresponde a la fila real de Excel:
-# la fila 1 contiene los encabezados.
+# La primera fila del Excel contiene los encabezados.
 df['ID_FILA_ORIGINAL'] = df.index + 2
 
 cantidad_original = len(df)
@@ -67,7 +74,11 @@ for columna in columnas_texto:
         df[columna]
         .astype('string')
         .str.strip()
-        .str.replace(r'\s+', ' ', regex=True)
+        .str.replace(
+            r'\s+',
+            ' ',
+            regex=True
+        )
         .str.upper()
         .replace('', pd.NA)
     )
@@ -77,8 +88,6 @@ for columna in columnas_texto:
 # 4. CONVERTIR HORAS
 # ==========================================================
 
-# Conservamos temporalmente las horas como datetime
-# para poder calcular la duración.
 hora_inicio_datetime = pd.to_datetime(
     df['HORAINICIO'],
     errors='coerce'
@@ -90,10 +99,11 @@ hora_fin_datetime = pd.to_datetime(
 )
 
 df['DURACIONMINUTOS'] = (
-    hora_fin_datetime - hora_inicio_datetime
+    hora_fin_datetime
+    - hora_inicio_datetime
 ).dt.total_seconds() / 60
 
-# Luego dejamos únicamente la hora para facilitar su lectura.
+# Conservamos únicamente la hora para visualizarla.
 df['HORAINICIO'] = hora_inicio_datetime.dt.time
 df['HORAFIN'] = hora_fin_datetime.dt.time
 
@@ -112,8 +122,10 @@ df['PARALELO'] = pd.to_numeric(
     errors='coerce'
 ).astype('Int64')
 
-# Se conserva el dato reportado antes de ajustarlo.
-df['NUMREGISTRADOS_REPORTADO'] = df['NUMREGISTRADOS']
+# Conservamos el dato original antes de transformarlo.
+df['NUMREGISTRADOS_REPORTADO'] = (
+    df['NUMREGISTRADOS']
+)
 
 df['NUMREGISTRADOS'] = pd.to_numeric(
     df['NUMREGISTRADOS'],
@@ -129,14 +141,14 @@ df_filtrado = df[
     (df['ANIO'] == anio_objetivo)
     & (df['TERMINO'] == termino_objetivo)
     & (df['CAMPUS'] == campus_objetivo)
-].copy()
+].copy().reset_index(drop=True)
 
 print(
     f'Registros originales: {cantidad_original}'
 )
 
 print(
-    f'Registros del periodo y campus objetivo: '
+    'Registros del periodo y campus objetivo: '
     f'{len(df_filtrado)}'
 )
 
@@ -145,21 +157,19 @@ print(
 # 7. LIMPIAR E INFERIR MODALIDAD
 # ==========================================================
 
-# Conservamos la modalidad reportada.
 df_filtrado['MODALIDAD_REPORTADA'] = (
     df_filtrado['MODALIDAD']
 )
 
-# Esta columna será la utilizada para el análisis.
 df_filtrado['MODALIDAD_LIMPIA'] = (
     df_filtrado['MODALIDAD']
 )
 
-# Si la modalidad está vacía, pero:
-# - ESVIRTUAL es N
-# - existe aula
-# - existe bloque
-# se infiere provisionalmente que es presencial.
+# Si la modalidad está vacía, pero el evento:
+# - No está marcado como virtual.
+# - Tiene aula.
+# - Tiene bloque.
+# Se infiere provisionalmente que es presencial.
 condicion_modalidad_inferida = (
     df_filtrado['MODALIDAD'].isna()
     & (df_filtrado['ESVIRTUAL'] == 'N')
@@ -173,27 +183,35 @@ df_filtrado.loc[
 ] = 'PRESENCIAL'
 
 df_filtrado['FLAG_MODALIDAD_INFERIDA'] = (
-    condicion_modalidad_inferida.astype(int)
+    condicion_modalidad_inferida
+    .fillna(False)
+    .astype(int)
 )
 
-# Detectamos contradicciones entre las dos columnas.
+# Detectamos contradicciones.
 condicion_modalidad_inconsistente = (
     (
-        (df_filtrado['MODALIDAD_LIMPIA'] == 'PRESENCIAL')
+        (
+            df_filtrado['MODALIDAD_LIMPIA']
+            == 'PRESENCIAL'
+        )
         & (df_filtrado['ESVIRTUAL'] == 'S')
     )
     |
     (
-        (df_filtrado['MODALIDAD_LIMPIA'] == 'VIRTUAL')
+        (
+            df_filtrado['MODALIDAD_LIMPIA']
+            == 'VIRTUAL'
+        )
         & (df_filtrado['ESVIRTUAL'] == 'N')
     )
-)
+).fillna(False)
 
-df_filtrado['FLAG_MODALIDAD_INCONSISTENTE'] = (
-    condicion_modalidad_inconsistente.astype(int)
-)
+df_filtrado[
+    'FLAG_MODALIDAD_INCONSISTENTE'
+] = condicion_modalidad_inconsistente.astype(int)
 
-# Modalidad que no pudo interpretarse.
+# Modalidades que no pudieron interpretarse.
 condicion_modalidad_no_resuelta = (
     df_filtrado['MODALIDAD_LIMPIA'].isna()
     |
@@ -201,23 +219,28 @@ condicion_modalidad_no_resuelta = (
         ['PRESENCIAL', 'VIRTUAL']
     )
     |
-    ~df_filtrado['ESVIRTUAL'].isin(['S', 'N'])
+    ~df_filtrado['ESVIRTUAL'].isin(
+        ['S', 'N']
+    )
 )
 
-df_filtrado['FLAG_MODALIDAD_NO_RESUELTA'] = (
-    condicion_modalidad_no_resuelta.astype(int)
-)
+df_filtrado[
+    'FLAG_MODALIDAD_NO_RESUELTA'
+] = condicion_modalidad_no_resuelta.astype(int)
 
-# Una actividad se considera virtual confirmada
-# solamente cuando ambas variables coinciden.
+# Evento virtual confirmado:
+# ambas columnas coinciden en que es virtual.
 condicion_virtual_confirmada = (
-    (df_filtrado['MODALIDAD_LIMPIA'] == 'VIRTUAL')
+    (
+        df_filtrado['MODALIDAD_LIMPIA']
+        == 'VIRTUAL'
+    )
     & (df_filtrado['ESVIRTUAL'] == 'S')
-)
+).fillna(False)
 
-df_filtrado['FLAG_VIRTUAL_CONFIRMADO'] = (
-    condicion_virtual_confirmada.astype(int)
-)
+df_filtrado[
+    'FLAG_VIRTUAL_CONFIRMADO'
+] = condicion_virtual_confirmada.astype(int)
 
 
 # ==========================================================
@@ -232,7 +255,9 @@ condicion_hora_invalida = (
 )
 
 df_filtrado['FLAG_HORA_INVALIDA'] = (
-    condicion_hora_invalida.astype(int)
+    condicion_hora_invalida
+    .fillna(False)
+    .astype(int)
 )
 
 condicion_duracion_atipica = (
@@ -241,7 +266,7 @@ condicion_duracion_atipica = (
         df_filtrado['DURACIONMINUTOS']
         > duracion_maxima_minutos
     )
-)
+).fillna(False)
 
 df_filtrado['FLAG_DURACION_ATIPICA'] = (
     condicion_duracion_atipica.astype(int)
@@ -259,18 +284,22 @@ df_filtrado['FLAG_REGISTRADOS_FALTANTE'] = (
 )
 
 df_filtrado['FLAG_REGISTRADOS_NEGATIVO'] = (
-    (df_filtrado['NUMREGISTRADOS'] < 0)
+    df_filtrado['NUMREGISTRADOS']
+    .lt(0)
     .fillna(False)
     .astype(int)
 )
 
-df_filtrado['FLAG_REGISTRADOS_CERO_ORIGINAL'] = (
-    (df_filtrado['NUMREGISTRADOS'] == 0)
+df_filtrado[
+    'FLAG_REGISTRADOS_CERO_ORIGINAL'
+] = (
+    df_filtrado['NUMREGISTRADOS']
+    .eq(0)
     .fillna(False)
     .astype(int)
 )
 
-# Inicialmente, el valor ajustado es igual al reportado.
+# Inicialmente, el valor ajustado es igual al original.
 df_filtrado['NUMREGISTRADOS_AJUSTADO'] = (
     df_filtrado['NUMREGISTRADOS']
 )
@@ -286,17 +315,26 @@ condicion_ubicacion_invalida = (
     |
     df_filtrado['AULA']
     .fillna('')
-    .str.contains('VIRTUAL', regex=False)
+    .str.contains(
+        'VIRTUAL',
+        regex=False
+    )
     |
     df_filtrado['BLOQUE']
     .fillna('')
-    .str.contains('VIRTUAL', regex=False)
+    .str.contains(
+        'VIRTUAL',
+        regex=False
+    )
 )
 
 df_filtrado['FLAG_UBICACION_INVALIDA'] = (
-    condicion_ubicacion_invalida.astype(int)
+    condicion_ubicacion_invalida
+    .fillna(False)
+    .astype(int)
 )
 
+# Una misma aula puede aparecer en distintos bloques.
 df_filtrado['ID_ESPACIO'] = (
     df_filtrado['BLOQUE']
     .fillna('SIN_BLOQUE')
@@ -312,43 +350,70 @@ df_filtrado['ID_ESPACIO'] = (
 # 11. IDENTIFICAR PARALELOS TEÓRICOS Y PRÁCTICOS
 # ==========================================================
 
-condicion_paralelo_practico = (
-    df_filtrado['PARALELO']
-    .ge(100)
-    .fillna(False)
-)
-
 condicion_paralelo_teorico = (
     df_filtrado['PARALELO']
     .lt(100)
     .fillna(False)
 )
 
+condicion_paralelo_practico = (
+    df_filtrado['PARALELO']
+    .ge(100)
+    .fillna(False)
+)
+
+# Prácticos con estudiantes propios:
+# no deben relacionarse con ningún teórico.
+condicion_practico_con_registros = (
+    condicion_paralelo_practico
+    & df_filtrado['NUMREGISTRADOS']
+    .gt(0)
+    .fillna(False)
+)
+
+# Solamente los prácticos con cero buscarán
+# un paralelo teórico asociado.
+condicion_practico_cero = (
+    condicion_paralelo_practico
+    & df_filtrado['NUMREGISTRADOS']
+    .eq(0)
+    .fillna(False)
+)
+
 df_filtrado['TIPO_PARALELO'] = np.select(
     [
-        condicion_paralelo_practico,
-        condicion_paralelo_teorico
+        condicion_paralelo_teorico,
+        condicion_practico_con_registros,
+        condicion_practico_cero
     ],
     [
-        'PRACTICO',
-        'TEORICO'
+        'TEORICO',
+        'PRACTICO_INDEPENDIENTE',
+        'PRACTICO_SIN_REGISTRADOS'
     ],
     default='DESCONOCIDO'
+)
+
+# Se deja vacío para todos los registros inicialmente.
+df_filtrado[
+    'PARALELO_TEORICO_ASOCIADO'
+] = pd.Series(
+    pd.NA,
+    index=df_filtrado.index,
+    dtype='Int64'
 )
 
 paralelo_teorico_calculado = (
     df_filtrado['PARALELO'] % 100
 )
 
-df_filtrado['PARALELO_TEORICO_ASOCIADO'] = pd.Series(
-    pd.NA,
-    index=df_filtrado.index,
-    dtype='Int64'
-)
-
+# Solo se asigna un teórico a los prácticos
+# cuyo número de registrados es cero.
 condicion_asociacion_valida = (
-    condicion_paralelo_practico
-    & (paralelo_teorico_calculado > 0)
+    condicion_practico_cero
+    & paralelo_teorico_calculado
+    .gt(0)
+    .fillna(False)
 )
 
 df_filtrado.loc[
@@ -365,17 +430,25 @@ df_filtrado.loc[
 
 tabla_teoricos = (
     df_filtrado[
-        (df_filtrado['TIPO_PARALELO'] == 'TEORICO')
-        & (df_filtrado['NUMREGISTRADOS'] > 0)
+        (
+            df_filtrado['TIPO_PARALELO']
+            == 'TEORICO'
+        )
+        & df_filtrado['NUMREGISTRADOS']
+        .gt(0)
+        .fillna(False)
     ]
     .groupby(
-        ['CODIGOMATERIA', 'PARALELO'],
+        [
+            'CODIGOMATERIA',
+            'PARALELO'
+        ],
         as_index=False
     )
     .agg(
         NUMREGISTRADOS_TEORICO=(
             'NUMREGISTRADOS',
-            'min'
+            'first'
         ),
         CANTIDAD_VALORES_TEORICO=(
             'NUMREGISTRADOS',
@@ -386,7 +459,8 @@ tabla_teoricos = (
 
 tabla_teoricos = tabla_teoricos.rename(
     columns={
-        'PARALELO': 'PARALELO_TEORICO_ASOCIADO'
+        'PARALELO':
+        'PARALELO_TEORICO_ASOCIADO'
     }
 )
 
@@ -411,30 +485,57 @@ df_filtrado = df_filtrado.merge(
     validate='many_to_one'
 )
 
+# El merge reconstruye el índice.
+df_filtrado = df_filtrado.reset_index(
+    drop=True
+)
+
 
 # ==========================================================
-# 14. IMPUTAR ESTUDIANTES DE PARALELOS PRÁCTICOS
+# 14. RECALCULAR CONDICIONES DESPUÉS DEL MERGE
 # ==========================================================
+
+# Es necesario recalcular estas condiciones.
+# Las condiciones anteriores conservaban el índice
+# existente antes del merge.
+
+condicion_paralelo_practico = (
+    df_filtrado['PARALELO']
+    .ge(100)
+    .fillna(False)
+)
+
+condicion_practico_con_registros = (
+    condicion_paralelo_practico
+    & df_filtrado['NUMREGISTRADOS']
+    .gt(0)
+    .fillna(False)
+)
 
 condicion_practico_cero = (
-    (df_filtrado['TIPO_PARALELO'] == 'PRACTICO')
-    & (df_filtrado['NUMREGISTRADOS'] == 0)
+    condicion_paralelo_practico
+    & df_filtrado['NUMREGISTRADOS']
+    .eq(0)
+    .fillna(False)
 )
+
+
+# ==========================================================
+# 15. IMPUTAR PARALELOS PRÁCTICOS
+# ==========================================================
 
 condicion_practico_imputable = (
     condicion_practico_cero
     & df_filtrado[
         'PARALELO_TEORICO_ASOCIADO'
     ].notna()
-    & (
-        df_filtrado[
-            'CANTIDAD_VALORES_TEORICO'
-        ] == 1
-    )
     & df_filtrado[
         'NUMREGISTRADOS_TEORICO'
     ].notna()
-)
+    & df_filtrado[
+        'CANTIDAD_VALORES_TEORICO'
+    ].eq(1)
+).fillna(False)
 
 df_filtrado.loc[
     condicion_practico_imputable,
@@ -445,56 +546,73 @@ df_filtrado.loc[
 ]
 
 df_filtrado['FLAG_PRACTICO_IMPUTADO'] = (
-    condicion_practico_imputable.astype(int)
-)
-
-# El teórico tiene más de una cantidad registrada.
-condicion_teorico_ambiguo = (
-    condicion_practico_cero
-    & (
-        df_filtrado[
-            'CANTIDAD_VALORES_TEORICO'
-        ] > 1
-    )
+    condicion_practico_imputable
+    .fillna(False)
+    .astype(int)
 )
 
 df_filtrado[
-    'FLAG_PRACTICO_TEORICO_AMBIGUO'
-] = condicion_teorico_ambiguo.fillna(False).astype(int)
+    'FLAG_PRACTICO_INDEPENDIENTE'
+] = (
+    condicion_practico_con_registros
+    .fillna(False)
+    .astype(int)
+)
 
-# Existe una regla de asociación, pero no se encontró
-# un paralelo teórico con estudiantes positivos.
+# El teórico asociado presenta más de un
+# número de estudiantes.
+condicion_teorico_ambiguo = (
+    condicion_practico_cero
+    & df_filtrado[
+        'CANTIDAD_VALORES_TEORICO'
+    ].gt(1)
+).fillna(False)
+
+df_filtrado[
+    'FLAG_PRACTICO_TEORICO_AMBIGUO'
+] = condicion_teorico_ambiguo.astype(int)
+
+# Se calculó el teórico asociado, pero no se encontró
+# un valor positivo para ese teórico.
 condicion_practico_sin_teorico = (
     condicion_practico_cero
     & df_filtrado[
         'PARALELO_TEORICO_ASOCIADO'
     ].notna()
     & df_filtrado[
-        'CANTIDAD_VALORES_TEORICO'
+        'NUMREGISTRADOS_TEORICO'
     ].isna()
-)
+).fillna(False)
 
-df_filtrado['FLAG_PRACTICO_SIN_TEORICO'] = (
-    condicion_practico_sin_teorico.astype(int)
-)
+df_filtrado[
+    'FLAG_PRACTICO_SIN_TEORICO'
+] = condicion_practico_sin_teorico.astype(int)
 
+# Casos como 100, 200 o 300 cuyo residuo es cero.
 condicion_practico_sin_regla = (
     condicion_practico_cero
     & df_filtrado[
         'PARALELO_TEORICO_ASOCIADO'
     ].isna()
-)
+).fillna(False)
 
-df_filtrado['FLAG_PRACTICO_SIN_REGLA'] = (
-    condicion_practico_sin_regla.astype(int)
-)
+df_filtrado[
+    'FLAG_PRACTICO_SIN_REGLA'
+] = condicion_practico_sin_regla.astype(int)
 
 
 # ==========================================================
-# 15. REGISTRAR EL ORIGEN DEL NÚMERO DE ESTUDIANTES
+# 16. REGISTRAR ORIGEN DEL NÚMERO DE ESTUDIANTES
 # ==========================================================
 
-df_filtrado['ORIGEN_NUMREGISTRADOS'] = 'ORIGINAL'
+df_filtrado[
+    'ORIGEN_NUMREGISTRADOS'
+] = 'ORIGINAL'
+
+df_filtrado.loc[
+    condicion_practico_con_registros,
+    'ORIGEN_NUMREGISTRADOS'
+] = 'ORIGINAL_PRACTICO_INDEPENDIENTE'
 
 df_filtrado.loc[
     condicion_practico_imputable,
@@ -502,40 +620,41 @@ df_filtrado.loc[
 ] = 'HEREDADO_DEL_PARALELO_TEORICO'
 
 df_filtrado.loc[
-    df_filtrado[
-        'FLAG_PRACTICO_TEORICO_AMBIGUO'
-    ] == 1,
+    condicion_teorico_ambiguo,
     'ORIGEN_NUMREGISTRADOS'
 ] = 'TEORICO_AMBIGUO'
 
 df_filtrado.loc[
-    df_filtrado[
-        'FLAG_PRACTICO_SIN_TEORICO'
-    ] == 1,
+    condicion_practico_sin_teorico,
     'ORIGEN_NUMREGISTRADOS'
 ] = 'TEORICO_NO_ENCONTRADO'
 
 df_filtrado.loc[
-    df_filtrado[
-        'FLAG_PRACTICO_SIN_REGLA'
-    ] == 1,
+    condicion_practico_sin_regla,
     'ORIGEN_NUMREGISTRADOS'
 ] = 'ASOCIACION_NO_DEFINIDA'
 
-# Convertimos a entero después de realizar las imputaciones.
-df_filtrado['NUMREGISTRADOS_AJUSTADO'] = (
+df_filtrado[
+    'NUMREGISTRADOS_AJUSTADO'
+] = (
     pd.to_numeric(
-        df_filtrado['NUMREGISTRADOS_AJUSTADO'],
+        df_filtrado[
+            'NUMREGISTRADOS_AJUSTADO'
+        ],
         errors='coerce'
     )
     .round()
     .astype('Int64')
 )
 
+# Ceros que continúan pendientes después
+# de intentar completar los prácticos.
 df_filtrado[
     'FLAG_REGISTRADOS_CERO_PENDIENTE'
 ] = (
-    df_filtrado['NUMREGISTRADOS_AJUSTADO']
+    df_filtrado[
+        'NUMREGISTRADOS_AJUSTADO'
+    ]
     .eq(0)
     .fillna(False)
     .astype(int)
@@ -543,13 +662,20 @@ df_filtrado[
 
 
 # ==========================================================
-# 16. IDENTIFICAR EVENTOS FÍSICOS
+# 17. IDENTIFICAR EVENTOS FÍSICOS
 # ==========================================================
 
 condicion_evento_fisico = (
-    (df_filtrado['MODALIDAD_LIMPIA'] == 'PRESENCIAL')
+    (
+        df_filtrado['MODALIDAD_LIMPIA']
+        == 'PRESENCIAL'
+    )
     & (df_filtrado['ESVIRTUAL'] == 'N')
-    & (df_filtrado['FLAG_UBICACION_INVALIDA'] == 0)
+    & (
+        df_filtrado[
+            'FLAG_UBICACION_INVALIDA'
+        ] == 0
+    )
     & (
         df_filtrado[
             'FLAG_MODALIDAD_INCONSISTENTE'
@@ -563,12 +689,14 @@ condicion_evento_fisico = (
 )
 
 df_filtrado['ES_EVENTO_FISICO'] = (
-    condicion_evento_fisico.astype(int)
+    condicion_evento_fisico
+    .fillna(False)
+    .astype(int)
 )
 
 
 # ==========================================================
-# 17. DETECTAR POSIBLES DUPLICADOS
+# 18. DETECTAR POSIBLES DUPLICADOS
 # ==========================================================
 
 columnas_evento = [
@@ -581,7 +709,9 @@ columnas_evento = [
     'AULA'
 ]
 
-df_filtrado['CANTIDAD_REPETICIONES'] = (
+df_filtrado[
+    'CANTIDAD_REPETICIONES'
+] = (
     df_filtrado
     .groupby(
         columnas_evento,
@@ -590,28 +720,37 @@ df_filtrado['CANTIDAD_REPETICIONES'] = (
     .transform('size')
 )
 
-df_filtrado['FLAG_POSIBLE_DUPLICADO'] = (
-    df_filtrado['CANTIDAD_REPETICIONES']
+df_filtrado[
+    'FLAG_POSIBLE_DUPLICADO'
+] = (
+    df_filtrado[
+        'CANTIDAD_REPETICIONES'
+    ]
     .gt(1)
+    .fillna(False)
     .astype(int)
 )
 
-# Los posibles duplicados no se eliminan automáticamente.
-
 
 # ==========================================================
-# 18. ASIGNAR ESTADO A CADA REGISTRO
+# 19. ASIGNAR ESTADO A CADA REGISTRO
 # ==========================================================
 
 condicion_excluido = (
-    df_filtrado['FLAG_VIRTUAL_CONFIRMADO'] == 1
+    df_filtrado[
+        'FLAG_VIRTUAL_CONFIRMADO'
+    ] == 1
 )
 
 condicion_invalido = (
     ~condicion_excluido
     &
     (
-        (df_filtrado['FLAG_HORA_INVALIDA'] == 1)
+        (
+            df_filtrado[
+                'FLAG_HORA_INVALIDA'
+            ] == 1
+        )
         |
         (
             df_filtrado[
@@ -715,7 +854,7 @@ df_filtrado.loc[
 
 
 # ==========================================================
-# 19. AGREGAR MOTIVO DEL ESTADO
+# 20. AGREGAR MOTIVO DEL ESTADO
 # ==========================================================
 
 def obtener_motivo_estado(fila):
@@ -761,6 +900,11 @@ def obtener_motivo_estado(fila):
             'NUMERO DE REGISTRADOS NEGATIVO'
         )
 
+    if fila['FLAG_PRACTICO_INDEPENDIENTE'] == 1:
+        motivos.append(
+            'PRACTICO CON REGISTROS PROPIOS'
+        )
+
     if fila['FLAG_PRACTICO_IMPUTADO'] == 1:
         motivos.append(
             'REGISTRADOS HEREDADOS DEL TEORICO'
@@ -802,26 +946,34 @@ def obtener_motivo_estado(fila):
     return '; '.join(motivos)
 
 
-df_filtrado['MOTIVO_ESTADO'] = df_filtrado.apply(
-    obtener_motivo_estado,
-    axis=1
+df_filtrado['MOTIVO_ESTADO'] = (
+    df_filtrado.apply(
+        obtener_motivo_estado,
+        axis=1
+    )
 )
 
 
 # ==========================================================
-# 20. SEPARAR LOS RESULTADOS
+# 21. SEPARAR RESULTADOS
 # ==========================================================
 
 df_validos = df_filtrado[
-    df_filtrado['ESTADO_REGISTRO'] == 'VALIDO'
+    df_filtrado[
+        'ESTADO_REGISTRO'
+    ] == 'VALIDO'
 ].copy()
 
 df_por_revisar = df_filtrado[
-    df_filtrado['ESTADO_REGISTRO'] == 'REVISAR'
+    df_filtrado[
+        'ESTADO_REGISTRO'
+    ] == 'REVISAR'
 ].copy()
 
 df_invalidos = df_filtrado[
-    df_filtrado['ESTADO_REGISTRO'] == 'INVALIDO'
+    df_filtrado[
+        'ESTADO_REGISTRO'
+    ] == 'INVALIDO'
 ].copy()
 
 df_excluidos = df_filtrado[
@@ -831,7 +983,15 @@ df_excluidos = df_filtrado[
 ].copy()
 
 df_practicos_imputados = df_filtrado[
-    df_filtrado['FLAG_PRACTICO_IMPUTADO'] == 1
+    df_filtrado[
+        'FLAG_PRACTICO_IMPUTADO'
+    ] == 1
+].copy()
+
+df_practicos_independientes = df_filtrado[
+    df_filtrado[
+        'FLAG_PRACTICO_INDEPENDIENTE'
+    ] == 1
 ].copy()
 
 df_modalidad_revisar = df_filtrado[
@@ -842,7 +1002,43 @@ df_modalidad_revisar = df_filtrado[
 
 
 # ==========================================================
-# 21. CREAR RESUMEN
+# 22. COMPROBACIONES
+# ==========================================================
+
+# Un práctico independiente nunca debe estar asociado
+# a un paralelo teórico.
+practicos_independientes_mal_asociados = (
+    df_filtrado[
+        (
+            df_filtrado['TIPO_PARALELO']
+            == 'PRACTICO_INDEPENDIENTE'
+        )
+        & df_filtrado[
+            'PARALELO_TEORICO_ASOCIADO'
+        ].notna()
+    ]
+)
+
+# Ningún práctico independiente debe haber sido modificado.
+practicos_independientes_modificados = (
+    df_filtrado[
+        (
+            df_filtrado['TIPO_PARALELO']
+            == 'PRACTICO_INDEPENDIENTE'
+        )
+        & (
+            df_filtrado['NUMREGISTRADOS']
+            !=
+            df_filtrado[
+                'NUMREGISTRADOS_AJUSTADO'
+            ]
+        )
+    ]
+)
+
+
+# ==========================================================
+# 23. CREAR RESUMEN
 # ==========================================================
 
 resumen = pd.DataFrame({
@@ -856,12 +1052,15 @@ resumen = pd.DataFrame({
         'MODALIDADES INFERIDAS',
         'MODALIDADES INCONSISTENTES',
         'REGISTRADOS EN CERO ORIGINAL',
+        'PRACTICOS INDEPENDIENTES',
         'PRACTICOS IMPUTADOS',
         'CEROS TODAVIA PENDIENTES',
         'PRACTICOS CON TEORICO AMBIGUO',
         'PRACTICOS SIN TEORICO',
         'PRACTICOS SIN REGLA',
-        'POSIBLES DUPLICADOS'
+        'POSIBLES DUPLICADOS',
+        'INDEPENDIENTES MAL ASOCIADOS',
+        'INDEPENDIENTES MODIFICADOS'
     ],
     'CANTIDAD': [
         cantidad_original,
@@ -883,6 +1082,11 @@ resumen = pd.DataFrame({
         int(
             df_filtrado[
                 'FLAG_REGISTRADOS_CERO_ORIGINAL'
+            ].sum()
+        ),
+        int(
+            df_filtrado[
+                'FLAG_PRACTICO_INDEPENDIENTE'
             ].sum()
         ),
         int(
@@ -914,17 +1118,50 @@ resumen = pd.DataFrame({
             df_filtrado[
                 'FLAG_POSIBLE_DUPLICADO'
             ].sum()
+        ),
+        len(
+            practicos_independientes_mal_asociados
+        ),
+        len(
+            practicos_independientes_modificados
         )
     ]
 })
 
 
 # ==========================================================
-# 22. EXPORTAR RESULTADOS
+# 24. CREAR CATÁLOGO DE BLOQUES
+# ==========================================================
+
+catalogo_bloques = (
+    df_filtrado[
+        [
+            'BLOQUE',
+            'REFERENCIA'
+        ]
+    ]
+    .drop_duplicates()
+    .sort_values(
+        [
+            'BLOQUE',
+            'REFERENCIA'
+        ]
+    )
+    .reset_index(drop=True)
+)
+
+
+# ==========================================================
+# 25. EXPORTAR RESULTADOS
 # ==========================================================
 
 os.makedirs(
     os.path.dirname(ruta_salida),
+    exist_ok=True
+)
+
+os.makedirs(
+    os.path.dirname(ruta_catalogo_bloques),
     exist_ok=True
 )
 
@@ -969,6 +1206,12 @@ with pd.ExcelWriter(
         index=False
     )
 
+    df_practicos_independientes.to_excel(
+        writer,
+        sheet_name='PRACTICOS_INDEPEND',
+        index=False
+    )
+
     df_modalidad_revisar.to_excel(
         writer,
         sheet_name='MODALIDAD_REVISAR',
@@ -981,27 +1224,53 @@ with pd.ExcelWriter(
         index=False
     )
 
+catalogo_bloques.to_excel(
+    ruta_catalogo_bloques,
+    index=False
+)
+
 
 # ==========================================================
-# 23. MOSTRAR RESULTADOS EN CONSOLA
+# 26. MOSTRAR RESULTADOS
 # ==========================================================
 
 print()
 print('LIMPIEZA FINALIZADA')
 print('-------------------')
 print(resumen.to_string(index=False))
-print()
-print(f'Archivo generado en:\n{ruta_salida}')
 
-catalogo_bloques = (
-    df_filtrado[
-        ['BLOQUE', 'REFERENCIA']
-    ]
-    .drop_duplicates()
-    .sort_values('BLOQUE')
+print()
+print(
+    'Valores NA en condicion_practico_imputable:',
+    int(
+        condicion_practico_imputable
+        .isna()
+        .sum()
+    )
 )
 
-catalogo_bloques.to_excel(
-    'catalogos/catalogo_bloques.xlsx',
-    index=False
+print(
+    'Prácticos independientes asociados '
+    'incorrectamente:',
+    len(
+        practicos_independientes_mal_asociados
+    )
+)
+
+print(
+    'Prácticos independientes modificados:',
+    len(
+        practicos_independientes_modificados
+    )
+)
+
+print()
+print(
+    f'Archivo de resultados:\n{ruta_salida}'
+)
+
+print()
+print(
+    f'Catálogo de bloques:\n'
+    f'{ruta_catalogo_bloques}'
 )
