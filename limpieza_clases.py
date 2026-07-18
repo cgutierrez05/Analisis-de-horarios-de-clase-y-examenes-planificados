@@ -1128,31 +1128,8 @@ resumen = pd.DataFrame({
     ]
 })
 
-
 # ==========================================================
-# 24. CREAR CATÁLOGO DE BLOQUES
-# ==========================================================
-
-catalogo_bloques = (
-    df_filtrado[
-        [
-            'BLOQUE',
-            'REFERENCIA'
-        ]
-    ]
-    .drop_duplicates()
-    .sort_values(
-        [
-            'BLOQUE',
-            'REFERENCIA'
-        ]
-    )
-    .reset_index(drop=True)
-)
-
-
-# ==========================================================
-# 25. EXPORTAR RESULTADOS
+# 24. EXPORTAR RESULTADOS
 # ==========================================================
 
 os.makedirs(
@@ -1224,12 +1201,6 @@ with pd.ExcelWriter(
         index=False
     )
 
-catalogo_bloques.to_excel(
-    ruta_catalogo_bloques,
-    index=False
-)
-
-
 # ==========================================================
 # 26. MOSTRAR RESULTADOS
 # ==========================================================
@@ -1267,10 +1238,4 @@ print(
 print()
 print(
     f'Archivo de resultados:\n{ruta_salida}'
-)
-
-print()
-print(
-    f'Catálogo de bloques:\n'
-    f'{ruta_catalogo_bloques}'
 )
