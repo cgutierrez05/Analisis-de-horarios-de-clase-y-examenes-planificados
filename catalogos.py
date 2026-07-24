@@ -393,6 +393,7 @@ catalogo_bloques.insert(
 
 # Solamente necesitamos una coordenada por bloque.
 columnas_manuales = [
+    'FACULTAD',
     'LATITUD',
     'LONGITUD'
 ]
@@ -577,6 +578,7 @@ orden_columnas = [
     'ID_BLOQUE',
     'BLOQUE',
     'REFERENCIAS',
+    'FACULTAD',
     'LATITUD',
     'LONGITUD'
 ]

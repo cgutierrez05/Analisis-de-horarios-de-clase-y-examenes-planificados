@@ -374,6 +374,21 @@ df_filtrado['FLAG_DIA_INCONSISTENTE'] = (
     .astype(int)
 )
 
+df_filtrado['DIA_LIMPIO'] = (
+    df_filtrado['DIA_CALCULADO']
+    .where(
+        df_filtrado['DIA_CALCULADO'].notna(),
+        df_filtrado['DIA_REPORTADO']
+    )
+)
+
+df_filtrado['FLAG_DIA_CORREGIDO'] = (
+    (
+        df_filtrado['FLAG_DIA_INCONSISTENTE'] == 1
+    )
+    & df_filtrado['DIA_CALCULADO'].notna()
+).fillna(False).astype(int)
+
 
 # ==========================================================
 # 12. VALIDAR TIPO DE EXAMEN
@@ -584,11 +599,60 @@ df_filtrado['ID_ESPACIO'] = (
 
 
 # ==========================================================
-# 17. IDENTIFICAR EVENTOS FÍSICOS
+# 17. DEFINIR CRITERIOS DE EXCLUSIÓN
 # ==========================================================
 
-# Es una clasificación provisional:
-# ESVIRTUAL=N y tiene una ubicación válida.
+# Excluir todos los exámenes marcados como virtuales,
+# aunque tengan aula y bloque asignados.
+condicion_excluir_virtual = (
+    df_filtrado['ESVIRTUAL']
+    .eq('S')
+    .fillna(False)
+)
+
+df_filtrado['FLAG_EXCLUIR_VIRTUAL'] = (
+    condicion_excluir_virtual.astype(int)
+)
+
+
+# Excluir exámenes con cero estudiantes.
+condicion_excluir_cero = (
+    df_filtrado[
+        'NUMREGISTRADOS_AJUSTADO'
+    ]
+    .eq(0)
+    .fillna(False)
+)
+
+df_filtrado['FLAG_EXCLUIR_CERO'] = (
+    condicion_excluir_cero.astype(int)
+)
+
+
+# Excluir exámenes cuya hora de inicio
+# sea igual a la hora de finalización.
+condicion_excluir_horas_iguales = (
+    df_filtrado[
+        'FLAG_HORAS_IGUALES'
+    ] == 1
+)
+
+df_filtrado[
+    'FLAG_EXCLUIR_HORAS_IGUALES'
+] = (
+    condicion_excluir_horas_iguales
+    .fillna(False)
+    .astype(int)
+)
+
+
+# ==========================================================
+# 18. IDENTIFICAR EVENTOS FÍSICOS PROVISIONALES
+# ==========================================================
+
+# Esta bandera solo indica que el examen aparece
+# como presencial y tiene una ubicación válida.
+# No garantiza todavía que sea utilizable.
 
 condicion_evento_fisico = (
     (df_filtrado['ESVIRTUAL'] == 'N')
@@ -612,7 +676,7 @@ df_filtrado['ES_EVENTO_FISICO'] = (
 
 
 # ==========================================================
-# 18. DETECTAR EVENTOS REPETIDOS
+# 19. DETECTAR EVENTOS REPETIDOS
 # ==========================================================
 
 columnas_evento = [
@@ -637,7 +701,7 @@ df_filtrado['FLAG_EVENTO_REPETIDO'] = (
 
 
 # ==========================================================
-# 19. DETECTAR DUPLICADOS EXACTOS
+# 20. DETECTAR DUPLICADOS EXACTOS
 # ==========================================================
 
 columnas_duplicado_exacto = [
@@ -661,7 +725,6 @@ columnas_duplicado_exacto = [
     'REFERENCIA'
 ]
 
-# Solo utilizamos las columnas que realmente existen.
 columnas_duplicado_exacto = [
     columna
     for columna in columnas_duplicado_exacto
@@ -679,8 +742,13 @@ df_filtrado['FLAG_DUPLICADO_EXACTO'] = (
 
 
 # ==========================================================
-# 20. CLASIFICAR REGISTROS
+# 21. CLASIFICAR REGISTROS
 # ==========================================================
+
+# Los registros virtuales no necesitan tener
+# aula o bloque válidos, porque serán excluidos.
+# La ubicación inválida solo afecta a los
+# exámenes considerados presenciales.
 
 condicion_invalido = (
     (df_filtrado['FLAG_FECHA_INVALIDA'] == 1)
@@ -701,36 +769,58 @@ condicion_invalido = (
     |
     (
         df_filtrado[
-            'FLAG_UBICACION_INVALIDA'
+            'FLAG_TIPO_EXAMEN_INVALIDO'
         ] == 1
     )
     |
     (
-        df_filtrado[
-            'FLAG_TIPO_EXAMEN_INVALIDO'
-        ] == 1
+        (df_filtrado['ESVIRTUAL'] == 'N')
+        &
+        (
+            df_filtrado[
+                'FLAG_UBICACION_INVALIDA'
+            ] == 1
+        )
     )
 )
 
+
+# Primera exclusión: examen virtual.
+condicion_excluido_virtual = (
+    ~condicion_invalido
+    & condicion_excluir_virtual
+)
+
+
+# Segunda exclusión: examen con cero estudiantes.
+condicion_excluido_cero = (
+    ~condicion_invalido
+    & ~condicion_excluido_virtual
+    & condicion_excluir_cero
+)
+
+
+# Tercera exclusión: hora inicial y final iguales.
+condicion_excluido_horas_iguales = (
+    ~condicion_invalido
+    & ~condicion_excluido_virtual
+    & ~condicion_excluido_cero
+    & condicion_excluir_horas_iguales
+)
+
+
+# Los días inconsistentes ya no entran aquí,
+# porque fueron corregidos usando DIA_CALCULADO.
 condicion_revisar = (
     ~condicion_invalido
+    & ~condicion_excluido_virtual
+    & ~condicion_excluido_cero
+    & ~condicion_excluido_horas_iguales
     &
     (
         (
             df_filtrado[
                 'FLAG_DIA_FALTANTE'
-            ] == 1
-        )
-        |
-        (
-            df_filtrado[
-                'FLAG_DIA_INCONSISTENTE'
-            ] == 1
-        )
-        |
-        (
-            df_filtrado[
-                'FLAG_HORAS_IGUALES'
             ] == 1
         )
         |
@@ -742,19 +832,7 @@ condicion_revisar = (
         |
         (
             df_filtrado[
-                'FLAG_VIRTUAL_EN_CAMPUS_FISICO'
-            ] == 1
-        )
-        |
-        (
-            df_filtrado[
                 'FLAG_ESVIRTUAL_NO_RESUELTO'
-            ] == 1
-        )
-        |
-        (
-            df_filtrado[
-                'FLAG_REGISTRADOS_CERO'
             ] == 1
         )
         |
@@ -772,6 +850,7 @@ condicion_revisar = (
     )
 )
 
+
 df_filtrado['ESTADO_REGISTRO'] = 'VALIDO'
 
 df_filtrado.loc[
@@ -780,13 +859,36 @@ df_filtrado.loc[
 ] = 'REVISAR'
 
 df_filtrado.loc[
+    condicion_excluido_horas_iguales,
+    'ESTADO_REGISTRO'
+] = 'EXCLUIDO_HORAS_IGUALES'
+
+df_filtrado.loc[
+    condicion_excluido_cero,
+    'ESTADO_REGISTRO'
+] = 'EXCLUIDO_CERO'
+
+df_filtrado.loc[
+    condicion_excluido_virtual,
+    'ESTADO_REGISTRO'
+] = 'EXCLUIDO_VIRTUAL'
+
+df_filtrado.loc[
     condicion_invalido,
     'ESTADO_REGISTRO'
 ] = 'INVALIDO'
 
 
+# Esta será la bandera definitiva para el análisis.
+df_filtrado['ES_EXAMEN_UTILIZABLE'] = (
+    df_filtrado['ESTADO_REGISTRO']
+    .eq('VALIDO')
+    .astype(int)
+)
+
+
 # ==========================================================
-# 21. CREAR MOTIVO DEL ESTADO
+# 22. CREAR MOTIVO DEL ESTADO
 # ==========================================================
 
 def obtener_motivo_estado(fila):
@@ -803,9 +905,9 @@ def obtener_motivo_estado(fila):
             'DIA REPORTADO FALTANTE'
         )
 
-    if fila['FLAG_DIA_INCONSISTENTE'] == 1:
+    if fila['FLAG_DIA_CORREGIDO'] == 1:
         motivos.append(
-            'DIA NO COINCIDE CON FECHA'
+            'DIA CORREGIDO CON BASE EN LA FECHA'
         )
 
     if fila['FLAG_TIPO_EXAMEN_INVALIDO'] == 1:
@@ -818,14 +920,14 @@ def obtener_motivo_estado(fila):
             'HORARIO INVALIDO'
         )
 
-    if fila['FLAG_HORAS_IGUALES'] == 1:
+    if fila['FLAG_EXCLUIR_HORAS_IGUALES'] == 1:
         motivos.append(
-            'HORAS DE INICIO Y FIN IGUALES'
+            'EXCLUIDO POR HORAS DE INICIO Y FIN IGUALES'
         )
 
     if fila['FLAG_DURACION_ATIPICA'] == 1:
         motivos.append(
-            'DURACION MAYOR A 5 HORAS'
+            'DURACION MAYOR AL LIMITE ESTABLECIDO'
         )
 
     if fila['FLAG_REGISTRADOS_FALTANTE'] == 1:
@@ -838,14 +940,19 @@ def obtener_motivo_estado(fila):
             'NUMERO DE REGISTRADOS NEGATIVO'
         )
 
-    if fila['FLAG_REGISTRADOS_CERO'] == 1:
+    if fila['FLAG_EXCLUIR_CERO'] == 1:
         motivos.append(
-            'NUMERO DE REGISTRADOS EN CERO'
+            'EXCLUIDO POR CERO ESTUDIANTES'
         )
 
     if fila['FLAG_ESVIRTUAL_NO_RESUELTO'] == 1:
         motivos.append(
             'ESVIRTUAL NO RESUELTO'
+        )
+
+    if fila['FLAG_EXCLUIR_VIRTUAL'] == 1:
+        motivos.append(
+            'EXAMEN VIRTUAL EXCLUIDO'
         )
 
     if fila[
@@ -885,10 +992,11 @@ df_filtrado['MOTIVO_ESTADO'] = (
 
 
 # ==========================================================
-# 22. SEPARAR RESULTADOS
+# 23. SEPARAR RESULTADOS
 # ==========================================================
 
-df_validos = df_filtrado[
+# Esta será la hoja utilizada para el análisis.
+df_datos_limpios = df_filtrado[
     df_filtrado[
         'ESTADO_REGISTRO'
     ] == 'VALIDO'
@@ -906,35 +1014,27 @@ df_invalidos = df_filtrado[
     ] == 'INVALIDO'
 ].copy()
 
-df_virtualidad_revisar = df_filtrado[
+df_excluidos_virtuales = df_filtrado[
     df_filtrado[
-        'FLAG_VIRTUAL_EN_CAMPUS_FISICO'
-    ] == 1
+        'ESTADO_REGISTRO'
+    ] == 'EXCLUIDO_VIRTUAL'
 ].copy()
 
-df_dia_revisar = df_filtrado[
-    (
-        df_filtrado[
-            'FLAG_DIA_INCONSISTENTE'
-        ] == 1
-    )
-    |
-    (
-        df_filtrado[
-            'FLAG_DIA_FALTANTE'
-        ] == 1
-    )
+df_excluidos_cero = df_filtrado[
+    df_filtrado[
+        'ESTADO_REGISTRO'
+    ] == 'EXCLUIDO_CERO'
 ].copy()
 
-df_horas_iguales = df_filtrado[
+df_excluidos_horas_iguales = df_filtrado[
     df_filtrado[
-        'FLAG_HORAS_IGUALES'
-    ] == 1
+        'ESTADO_REGISTRO'
+    ] == 'EXCLUIDO_HORAS_IGUALES'
 ].copy()
 
-df_ceros_registrados = df_filtrado[
+df_dias_corregidos = df_filtrado[
     df_filtrado[
-        'FLAG_REGISTRADOS_CERO'
+        'FLAG_DIA_CORREGIDO'
     ] == 1
 ].copy()
 
@@ -954,50 +1054,62 @@ df_eventos_repetidos = df_filtrado[
 
 
 # ==========================================================
-# 23. CREAR RESUMEN
+# 24. COMPROBAR LA CLASIFICACIÓN
+# ==========================================================
+
+cantidad_clasificada = (
+    len(df_datos_limpios)
+    + len(df_por_revisar)
+    + len(df_invalidos)
+    + len(df_excluidos_virtuales)
+    + len(df_excluidos_cero)
+    + len(df_excluidos_horas_iguales)
+)
+
+if cantidad_clasificada != len(df_filtrado):
+
+    raise ValueError(
+        'La suma de las categorías no coincide '
+        'con el total de registros filtrados.'
+    )
+
+
+# ==========================================================
+# 25. CREAR RESUMEN
 # ==========================================================
 
 resumen = pd.DataFrame({
     'METRICA': [
         'REGISTROS ORIGINALES',
         'REGISTROS DEL PERIODO Y CAMPUS',
-        'REGISTROS VALIDOS',
+        'REGISTROS LIMPIOS FINALES',
         'REGISTROS POR REVISAR',
         'REGISTROS INVALIDOS',
-        'FECHAS INVALIDAS',
-        'DIAS INCONSISTENTES',
+        'EXCLUIDOS POR SER VIRTUALES',
+        'EXCLUIDOS POR CERO ESTUDIANTES',
+        'EXCLUIDOS POR HORAS IGUALES',
+        'DIAS CORREGIDOS CON FECHA',
         'DIAS FALTANTES',
-        'TIPOS DE EXAMEN INVALIDOS',
-        'HORARIOS INVALIDOS',
-        'HORAS DE INICIO Y FIN IGUALES',
         'DURACIONES ATIPICAS',
-        'VIRTUALIDAD EN CAMPUS FISICO',
         'ESVIRTUAL NO RESUELTO',
-        'REGISTRADOS EN CERO',
-        'REGISTRADOS FALTANTES',
-        'REGISTRADOS NEGATIVOS',
-        'UBICACIONES INVALIDAS',
         'EVENTOS REPETIDOS',
         'DUPLICADOS EXACTOS',
-        'EVENTOS FISICOS PROVISIONALES'
+        'REGISTROS CLASIFICADOS'
     ],
 
     'CANTIDAD': [
         cantidad_original,
         len(df_filtrado),
-        len(df_validos),
+        len(df_datos_limpios),
         len(df_por_revisar),
         len(df_invalidos),
+        len(df_excluidos_virtuales),
+        len(df_excluidos_cero),
+        len(df_excluidos_horas_iguales),
 
         int(
             df_filtrado[
-                'FLAG_FECHA_INVALIDA'
-            ].sum()
-        ),
-
-        int(
-            df_filtrado[
-                'FLAG_DIA_INCONSISTENTE'
+                'FLAG_DIA_CORREGIDO'
             ].sum()
         ),
 
@@ -1009,61 +1121,13 @@ resumen = pd.DataFrame({
 
         int(
             df_filtrado[
-                'FLAG_TIPO_EXAMEN_INVALIDO'
-            ].sum()
-        ),
-
-        int(
-            df_filtrado[
-                'FLAG_HORA_INVALIDA'
-            ].sum()
-        ),
-
-        int(
-            df_filtrado[
-                'FLAG_HORAS_IGUALES'
-            ].sum()
-        ),
-
-        int(
-            df_filtrado[
                 'FLAG_DURACION_ATIPICA'
             ].sum()
         ),
 
         int(
             df_filtrado[
-                'FLAG_VIRTUAL_EN_CAMPUS_FISICO'
-            ].sum()
-        ),
-
-        int(
-            df_filtrado[
                 'FLAG_ESVIRTUAL_NO_RESUELTO'
-            ].sum()
-        ),
-
-        int(
-            df_filtrado[
-                'FLAG_REGISTRADOS_CERO'
-            ].sum()
-        ),
-
-        int(
-            df_filtrado[
-                'FLAG_REGISTRADOS_FALTANTE'
-            ].sum()
-        ),
-
-        int(
-            df_filtrado[
-                'FLAG_REGISTRADOS_NEGATIVO'
-            ].sum()
-        ),
-
-        int(
-            df_filtrado[
-                'FLAG_UBICACION_INVALIDA'
             ].sum()
         ),
 
@@ -1079,17 +1143,13 @@ resumen = pd.DataFrame({
             ].sum()
         ),
 
-        int(
-            df_filtrado[
-                'ES_EVENTO_FISICO'
-            ].sum()
-        )
+        cantidad_clasificada
     ]
 })
 
 
 # ==========================================================
-# 24. EXPORTAR RESULTADOS
+# 26. EXPORTAR RESULTADOS
 # ==========================================================
 
 os.makedirs(
@@ -1102,15 +1162,17 @@ with pd.ExcelWriter(
     engine='openpyxl'
 ) as writer:
 
+    # Todos los registros y sus banderas.
     df_filtrado.to_excel(
         writer,
         sheet_name='TODOS_FILTRADOS',
         index=False
     )
 
-    df_validos.to_excel(
+    # Hoja principal para el análisis.
+    df_datos_limpios.to_excel(
         writer,
-        sheet_name='VALIDOS',
+        sheet_name='DATOS_LIMPIOS',
         index=False
     )
 
@@ -1126,27 +1188,27 @@ with pd.ExcelWriter(
         index=False
     )
 
-    df_virtualidad_revisar.to_excel(
+    df_excluidos_virtuales.to_excel(
         writer,
-        sheet_name='VIRTUALIDAD_REVISAR',
+        sheet_name='EXCLUIDOS_VIRTUAL',
         index=False
     )
 
-    df_dia_revisar.to_excel(
+    df_excluidos_cero.to_excel(
         writer,
-        sheet_name='DIA_REVISAR',
+        sheet_name='EXCLUIDOS_CERO',
         index=False
     )
 
-    df_horas_iguales.to_excel(
+    df_excluidos_horas_iguales.to_excel(
         writer,
-        sheet_name='HORAS_IGUALES',
+        sheet_name='EXCLUIDOS_HORAS_IGUALES',
         index=False
     )
 
-    df_ceros_registrados.to_excel(
+    df_dias_corregidos.to_excel(
         writer,
-        sheet_name='CEROS_REGISTRADOS',
+        sheet_name='DIAS_CORREGIDOS',
         index=False
     )
 
@@ -1164,7 +1226,7 @@ with pd.ExcelWriter(
 
 
 # ==========================================================
-# 25. MOSTRAR RESULTADOS
+# 27. MOSTRAR RESULTADOS
 # ==========================================================
 
 print()
@@ -1175,6 +1237,32 @@ print(
     resumen.to_string(
         index=False
     )
+)
+
+print()
+print(
+    'Días corregidos usando la fecha:',
+    len(df_dias_corregidos)
+)
+
+print(
+    'Exámenes virtuales excluidos:',
+    len(df_excluidos_virtuales)
+)
+
+print(
+    'Exámenes excluidos por cero estudiantes:',
+    len(df_excluidos_cero)
+)
+
+print(
+    'Exámenes excluidos por horas iguales:',
+    len(df_excluidos_horas_iguales)
+)
+
+print(
+    'Registros limpios finales:',
+    len(df_datos_limpios)
 )
 
 print()
